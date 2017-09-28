@@ -1,7 +1,8 @@
+/* global AFRAME */
 // Grid along X and Z (horizontal planes).
 
 AFRAME.registerShader('grid', {
-  schema: { 
+  schema: {
     color: {type: 'color', is: 'uniform', default: 'white'},
     opacity: {type: 'number', is: 'uniform', default: 1.0},
     thickness: {type: 'number', is: 'uniform', default: 1.0},
