@@ -1,0 +1,37 @@
+<html>
+  <head>
+    <script src="https://rawgit.com/aframevr/aframe/master/dist/aframe-master.min.js"></script>
+    <script src="grid-shader.js"></script>
+    <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v2.0.0/dist/aframe-physics-system.min.js"></script>
+    <script src="//cdn.rawgit.com/donmccurdy/aframe-extras/v3.12.3/dist/aframe-extras.loaders.min.js"></script>
+  </head>
+  <body>
+    <a-scene physics="gravity:0;friction:0;restitution:1;driver:worker">
+      <a-box width="1000" height="1000" depth="1000" scale="1 1 -1" material="shader:flat;color:black"></a-box>
+      
+      <!-- top    --><a-box class="wall" static-body position="0 3.5 -4" width="10" height="1" depth="10" material="shader:grid;interval:1;color:cyan"></a-box>
+      <!-- front  --><a-box class="wall" static-body position="0 1.5 -9.5" width="10" height="1" depth="3" rotation="-90 0 0" material="shader:grid;interval:1;color:cyan"></a-box>
+      <!-- back   --><a-box class="wall" static-body position="0 1.5 1.5" width="10" height="1" depth="3" rotation="-90 180 0" material="shader:grid;interval:1;color:cyan"></a-box>
+      <!-- left   --><a-box class="wall" static-body position="-5.5 1.5 -4" width="10" height="1" depth="3" rotation="-90 90 0" material="shader:grid;interval:1;color:cyan"></a-box>
+      <!-- right  --><a-box class="wall" static-body position="5.5 1.5 -4" width="10" height="1" depth="3" rotation="-90 -90 0" material="shader:grid;interval:1;color:cyan"></a-box>
+      <!-- bottom --><a-box class="wall" static-body position="0 -0.5 -4" width="10" height="1" depth="10" material="shader:grid;interval:1;color:cyan"></a-box>
+
+      <a-sphere class="ball" dynamic-body="mass:0.1;linear-damping:0;angular-damping:0" position="0.2 1 -2" radius="0.1" material="shader:grid;color:cyan"></a-sphere>
+      
+      <a-cylinder class="disc" dynamic-body="mass:1;linear-damping:0;angular-damping:0" position="-0.2 1 -2" radius="0.1" height="0.02" material="shader:grid;color:cyan"></a-cylinder>
+      
+      <a-entity class="head" static-body position="0 1.6 -5" rotation="0 180 0" scale="2.1 2.1 1.4" 
+                material="src:https://aframe.io/a-saturday-night/assets/avatar3/avatar3.jpg"
+                gltf-model-legacy="https://aframe.io/a-saturday-night/assets/avatar3/avatar3-head.gltf"></a-entity>
+    </a-scene>
+    <script>
+      var scene = document.querySelector('a-scene');
+      var ball = scene.querySelector('.ball');
+      var disc = scene.querySelector('.disc');
+      scene.addEventListener('loaded', function () {
+        ball.body.applyImpulse(new CANNON.Vec3(-1, 0, -5), new CANNON.Vec3().copy(ball.getAttribute('position')));
+        disc.body.applyImpulse(new CANNON.Vec3(1, 0, -3), new CANNON.Vec3().copy(disc.getAttribute('position')));
+      });
+    </script>
+  </body>
+</html>
