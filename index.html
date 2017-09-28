@@ -39,7 +39,7 @@
           for (var i=0; i<dbs.length; i++) {
             var el = dbs[i];
             var body = el.body;
-            // Compute difference between bodies.
+            // Compute difference between body and attractor position.
             if (this.el.body) {
               this.tempPosition.copy(this.el.body.position);
             } else {
@@ -103,7 +103,7 @@
       <!-- bottom --><a-box static-body position="0 -0.9 -4" width="13.6" height="1.8" depth="13.6" opacity="0"></a-box>
 
       <!-- Sun.  FIXME: body masses do not affect each other; zero gravity! -->
-      <a-sphere class="sun" attractor="mass:1e9" position="0 2 -3" radius="0.2" material="shader:grid;color:yellow"></a-sphere> 
+      <a-sphere class="sun" attractor="mass:1e9" position="0 2 -4" radius="0.2" material="shader:grid;interval:0.02;color:yellow"></a-sphere> 
 
       <!-- Ball to bounce around. -->
       <a-sphere class="ball" dynamic-body="mass:1;linearDamping:0;angularDamping:0" position="0.5 2 0" radius="0.1" material="shader:grid;color:cyan"></a-sphere>
