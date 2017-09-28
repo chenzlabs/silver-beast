@@ -11,41 +11,146 @@
     <!-- Prevent touch causing flicker on iOS. -->
     <style> * { -webkit-tap-highlight-color: rgba(0,0,0,0); } </style>    
     
-    <!-- Import physics. -->
-    <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v2.0.0/dist/aframe-physics-system.min.js"></script>
+    <!-- Import physics.  FIXME: bug in 2.0.0, so use prior version. -->
+    <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v1.4.3/dist/aframe-physics-system.js"></script>
     
     <!-- Import legacy GLTF loader. -->
+<!--
     <script src="//cdn.rawgit.com/donmccurdy/aframe-extras/v3.12.3/dist/aframe-extras.loaders.min.js"></script> 
+-->
   </head>
   <body>
-    <a-scene physics="gravity:0;friction:0;restitution:1;driver:worker">
+    <!-- Attractor component, to hopefully apply gravity to dynamic bodies. -->
+    <script>
+      AFRAME.registerComponent('attractor', {
+        schema: {
+          g: {default: 6.67e-11},
+          mass: {default: 1e9}
+        },
+
+        init: function () {
+          this.tempPosition = new CANNON.Vec3();
+          this.tempForce = new CANNON.Vec3();
+          this.forceDelta = new CANNON.Vec3();
+        },
+
+        tick: function (t, dt) {
+          var dbs = this.el.sceneEl.querySelectorAll('[dynamic-body]');
+          for (var i=0; i<dbs.length; i++) {
+            var el = dbs[i];
+            var body = el.body;
+            // Compute difference between bodies.
+            if (this.el.body) {
+              this.tempPosition.copy(this.el.body.position);
+            } else {
+              var position = this.el.getAttribute('position');
+              this.tempPosition.set(position.x, position.y, position.z);
+            }
+            this.tempPosition.vsub(body.position, this.tempForce);
+            // Compute distance between them (magnitude of difference).
+            var r = this.tempForce.length();
+            // Compute attraction strength.
+            var f = this.data.g * this.data.mass * body.mass / (r * r);
+            // make tempForce have the correct magnitude f.
+            this.tempForce.scale(f / r, this.tempForce);
+            // Compute force delta. NOTE: we need to know last applied value!
+            // FIXME: this will only work for one attractor...
+            if (el.lastComputedAttractor) {
+              this.tempForce.vsub(el.lastComputedAttractor, this.forceDelta);
+            } else {
+              el.lastComputedAttractor = new CANNON.Vec3().copy(this.tempForce);
+              this.forceDelta.copy(this.tempForce);
+            }
+            // Apply force delta.
+            body.applyLocalImpulse(this.forceDelta, CANNON.Vec3.ZERO);
+          }
+        }
+      });
+    </script>
+
+    <!-- Scene declaration, with physics system parameters. -->
+    <a-scene physics="gravity:0; friction:0; restitution:1">
+
+      <!-- Mixin used to reduce redundancy in wall definitions. -->
+      <a-mixin id="wall" 
+        class="wall" static-body
+        material="shader:grid;interval:1;color:cyan"></a-mixin>
+
+      <!-- Prefetch a texture, but short timeout to avoid blocking. -->
       <a-assets timeout="1">
         <img id="contrast-noise" crossorigin="anonymous"
              src="https://cdn.glitch.com/2d8374de-4ed1-4bfd-a6f4-95e0d4d6a47a%2Fcontrast-noise.png?1506062505936"></img>
       </a-assets>
+   
+      <!-- Outer void, and skybox. -->
+      <a-box id="void" scale="10000 10000 -10000" material="shader:flat;color:black"></a-box>
+      <a-box id="skybox" scale="1000 1000 -1000" material="shader:flat;color:black"></a-box>
       
-      <a-box width="1000" height="1000" depth="1000" scale="1 1 -1" material="shader:flat;color:black"></a-box>
-      
-      <!-- top    --><a-box class="wall" static-body position="0 3.5 -4" width="10" height="1" depth="10" material="shader:grid;interval:1;color:cyan"></a-box>
-      <!-- front  --><a-box class="wall" static-body position="0 1.5 -9.5" width="10" height="1" depth="3" rotation="-90 0 0" material="shader:grid;interval:1;color:cyan"></a-box>
-      <!-- back   --><a-box class="wall" static-body position="0 1.5 1.5" width="10" height="1" depth="3" rotation="-90 180 0" material="shader:grid;interval:1;color:cyan"></a-box>
-      <!-- left   --><a-box class="wall" static-body position="-5.5 1.5 -4" width="10" height="1" depth="3" rotation="-90 90 0" material="shader:grid;interval:1;color:cyan"></a-box>
-      <!-- right  --><a-box class="wall" static-body position="5.5 1.5 -4" width="10" height="1" depth="3" rotation="-90 -90 0" material="shader:grid;interval:1;color:cyan"></a-box>
-      <!-- bottom --><a-box class="wall" static-body position="0 -0.5 -4" width="10" height="1" depth="10" material="shader:grid;interval:1;color:cyan"></a-box>
+      <!-- Visible walls. --> 
+      <!-- top    --><a-box mixin="wall" position="0 3.1 -4" width="10" height="0.2" depth="10"></a-box>
+      <!-- front  --><a-box mixin="wall" position="0 1.5 -9.1" width="10" height="0.2" depth="3" rotation="-90 0 0"></a-box>
+      <!-- back   --><a-box mixin="wall" position="0 1.5 1.1" width="10" height="0.2" depth="3" rotation="-90 0 0"></a-box>
+      <!-- left   --><a-box mixin="wall" position="-5.1 1.5 -4" width="10" height="0.2" depth="3" rotation="-90 90 0"></a-box>
+      <!-- right  --><a-box mixin="wall" position="5.1 1.5 -4" width="10" height="0.2" depth="3" rotation="-90 -90 0"></a-box>
+      <!-- bottom --><a-box mixin="wall" static-body position="0 -0.1 -4" width="10" height="0.2" depth="10"></a-box>
 
-      <a-sphere class="ball" dynamic-body="mass:0.1;linear-damping:0;angular-damping:0" position="0.2 1 -2" radius="0.2" material="shader:grid;color:cyan"></a-sphere>
+      <!-- Invisible walls, thick to avoid passing through easily. --> 
+      <!-- top    --><a-box static-body position="0 3.9 -4" width="13.6" height="1.8" depth="13.6" opacity="0"></a-box>
+      <!-- front  --><a-box static-body position="0 1.5 -9.9" width="13.6" height="1.8" depth="3" rotation="-90 0 0" opacity="0"></a-box>
+      <!-- back   --><a-box static-body position="0 1.5 1.9" width="10" height="1.8" depth="3" rotation="-90 0 0" opacity="0"></a-box>
+      <!-- left   --><a-box static-body position="-5.9 1.5 -4" width="13.6" height="1.8" depth="3" rotation="-90 90 0" opacity="0"></a-box>
+      <!-- right  --><a-box static-body position="5.9 1.5 -4" width="13.6" height="1.8" depth="3" rotation="-90 -90 0" opacity="0"></a-box>
+      <!-- bottom --><a-box static-body position="0 -0.9 -4" width="13.6" height="1.8" depth="13.6" opacity="0"></a-box>
+
+      <!-- Sun.  FIXME: body masses do not affect each other; zero gravity! -->
+      <a-sphere class="sun" attractor="mass:1e9" position="0 2 -3" radius="0.2" material="shader:grid;color:yellow"></a-sphere> 
+
+      <!-- Ball to bounce around. -->
+      <a-sphere class="ball" dynamic-body="mass:1;linearDamping:0;angularDamping:0" position="0.5 2 0" radius="0.1" material="shader:grid;color:cyan"></a-sphere>
       
-      <a-cylinder class="disc" dynamic-body="mass:1;linear-damping:0;angular-damping:0" position="-0.2 1 -2" radius="0.1" height="0.02" material="shader:grid;color:cyan"></a-cylinder>
+      <!-- Disc to bounce around. -->
+      <a-cylinder class="disc" dynamic-body="mass:1;linearDamping:0;angularDamping:0" position="-0.5 2 0" radius="0.1" height="0.02" material="shader:grid;color:cyan"></a-cylinder>
       
-      <a-entity class="head" static-body position="0 1.6 -5" rotation="0 180 0" scale="2.1 2.1 1.4" 
+      <!-- Player avatar - here, the opponent farther away and facing. -->
+      <a-entity class="head" static-body position="0 0 0" rotation="0 180 0" scale="1.2 1.2 1.2" 
+                gltf-model="https://cdn.rawgit.com/KhronosGroup/glTF-Sample-Models/master/2.0/RiggedFigure/glTF-Binary/RiggedFigure.glb"
+                was-gltf-model="https://cdn.aframe.io/test-models/models/glTF-2.0/brainstem/BrainStem.gltf"></a-entity>
+
+      <!-- Player avatar - here, the local player, for spectators etc. -->
+      <a-entity class="head" static-body position="0 0 -8" rotation="0 0 0" scale="1.2 1.2 1.2" 
+                gltf-model="https://cdn.rawgit.com/KhronosGroup/glTF-Sample-Models/master/2.0/RiggedFigure/glTF-Binary/RiggedFigure.glb"
+                was-gltf-model="https://cdn.aframe.io/test-models/models/glTF-2.0/brainstem/BrainStem.gltf"></a-entity>
+
+      <!-- Deprecated avatar -- old glTF 1.0, which core doesn't support. -->
+      <!-- a-entity class="head" static-body position="0 1.6 -5" rotation="0 180 0" scale="2.1 2.1 1.4" 
                 material="src:https://aframe.io/a-saturday-night/assets/avatar3/avatar3.jpg"
-                gltf-model-legacy="https://aframe.io/a-saturday-night/assets/avatar3/avatar3-head.gltf"></a-entity>
+                not-gltf-model-legacy="https://aframe.io/a-saturday-night/assets/avatar3/avatar3-head.gltf"></a-entity -->
     </a-scene>
+
     <script>
+      // Define some convenience variables for scene elements we use below.
       var scene = document.querySelector('a-scene');
       var ball = scene.querySelector('.ball');
       var disc = scene.querySelector('.disc');
-     
+      var skybox = scene.querySelector('#skybox');
+
+      // Define some things we want to do once the scene is loaded. 
+      function onceSceneLoaded() {
+        setTimeout(function() {
+          // Get things moving.  FIXME: we want hard bounce, but not getting!?
+          ball.body.velocity.set(0, 0, -10);
+          disc.body.velocity.set(0, 0, -10);
+
+          // Make things look funky!
+          goElectricSphere();
+        });
+      }
+
+      if (scene.hasLoaded) { onceSceneLoaded(); } else {
+        scene.addEventListener('loaded', onceSceneLoaded);
+      }      
+
+      // This is how we make things look funky...
       function goElectricSphere() {
 // This is the JSON for the shader we want to use.
 // Really, we should load this from somewhere.
@@ -174,15 +279,9 @@ var importedShaderJSON = String.raw`
         // Apply the shader to scene entities.
         ball.setAttribute('material', {shader:'electricSphere', color:'#135', transparent:true});
         disc.setAttribute('material', {shader:'electricSphere', color:'#135', transparent:true});
+        skybox.setAttribute('material', {shader:'electricSphere', color:'#000103', transparent:true});
       }      
       
-      scene.addEventListener('loaded', function () {
-        setTimeout(function() {
-          ball.body.applyImpulse(new CANNON.Vec3(-1, 0, -2), new CANNON.Vec3().copy(ball.getAttribute('position')));
-          disc.body.applyImpulse(new CANNON.Vec3(1, 0, -5), new CANNON.Vec3().copy(disc.getAttribute('position')));
-          goElectricSphere();
-        });
-      });      
     </script>
   </body>
 </html>
