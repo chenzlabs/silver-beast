@@ -274,19 +274,22 @@
         console.log(NAF.clientId + ' players ' + JSON.stringify(players));
         if (players.length < 4) { return; }
         
-        if (NAF.clientId === players[0]) {
-          playerOne();
-        } else 
-        if (NAF.clientId === players[1]) {
-          playerTwo();
-        } else 
-        if (NAF.clientId === players[2]) {
-          playerThree();
-        } else 
-        if (NAF.clientId === players[3]) {
-          playerFour();
+        if (players.length === 4) {
+          if (NAF.clientId === players[0]) {
+            playerOne();
+          } else 
+          if (NAF.clientId === players[1]) {
+            playerTwo();
+          } else 
+          if (NAF.clientId === players[2]) {
+            playerThree();
+          } else 
+          if (NAF.clientId === players[3]) {
+            playerFour();
+          } 
         } else {
-          window.location.href = "kicked.html";
+          //window.location.href = "kicked.html";
+          spectator();
         }
         picked = true;
       }
@@ -341,6 +344,21 @@
       
       function playerFour() {
         console.log("playerFour()");
+        //scene.camera.el.setAttribute('position', {x:4, y:1.6, z:-4});
+        
+        // Player four.
+        // Disc to bounce around.
+        scene.insertAdjacentHTML('beforeend', 
+          '<a-entity player="Player 4" position="4 0 -4" rotation="0 90 0"></a-entity> '
+          + '<a-cylinder networked-adhoc class="disc3" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + 'material="shader:electricSphere; color:#351; transparent:true" '
+          + 'position="3 2 -4" radius="0.2" height="0.05">' 
+          + '</a-cylinder>');
+        setTimeout(function() { scene.querySelector(".disc3").body.velocity.set(-10, 0, 0); });
+      }        
+      
+      function spectator() {
+        console.log("spectator()");
         scene.camera.el.setAttribute('position', {x:4, y:1.6, z:-4});
         scene.camera.el.setAttribute('rotation', '0 90 0');
       }        
