@@ -1,0 +1,314 @@
+<html>
+  <head>
+    <script src="https://rawgit.com/aframevr/aframe/master/dist/aframe-master.min.js"></script>
+    
+    <!-- Import grid shader. -->
+    <script src="grid-shader.js"></script>    
+
+    <!-- Include ShaderFrog import. -->
+    <script src="https://rawgit.com/chenzlabs/aframe-import-shaderfrog/master/aframe-import-shaderfrog.js"></script>
+
+    <!-- Include electricSphere ShaderFrog shader. -->
+    <script src="electricSphere.js"></script>
+
+    <!-- Prevent touch causing flicker on iOS. -->
+    <style> * { -webkit-tap-highlight-color: rgba(0,0,0,0); } </style>    
+    
+    <!-- Import physics.  FIXME: bug in 2.0.0, so use prior version. -->
+    <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v1.4.3/dist/aframe-physics-system.js"></script>
+    
+    <!-- Import networked-aframe. -->
+    <script src="https://rawgit.com/chenzlabs/networked-aframe/positional-audio-2/dist/networked-aframe.js"></script>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-messaging.js"></script>    
+  </head>
+  <body>
+    <!-- Attractor component, to hopefully apply gravity to dynamic bodies. -->
+    <script>
+      AFRAME.registerComponent('attractor', {
+        schema: {
+          g: {default: 6.67e-11},
+          mass: {default: 1e9}
+        },
+
+        init: function () {
+          this.tempPosition = new CANNON.Vec3();
+          this.tempForce = new CANNON.Vec3();
+          this.forceDelta = new CANNON.Vec3();
+        },
+
+        tick: function (t, dt) {
+          var dbs = this.el.sceneEl.querySelectorAll('[dynamic-body]');
+          for (var i=0; i<dbs.length; i++) {
+            var el = dbs[i];
+            var body = el.body;
+            // Compute difference between body and attractor position.
+            if (this.el.body) {
+              this.tempPosition.copy(this.el.body.position);
+            } else {
+              var position = this.el.getAttribute('position');
+              this.tempPosition.set(position.x, position.y, position.z);
+            }
+            this.tempPosition.vsub(body.position, this.tempForce);
+            // Compute distance between them (magnitude of difference).
+            var r = this.tempForce.length();
+            // Compute attraction strength.
+            var f = this.data.g * this.data.mass * body.mass / (r * r);
+            // make tempForce have the correct magnitude f.
+            this.tempForce.scale(f / r, this.tempForce);
+            // Compute force delta. NOTE: we need to know last applied value!
+            // FIXME: this will only work for one attractor...
+            if (el.lastComputedAttractor) {
+              this.tempForce.vsub(el.lastComputedAttractor, this.forceDelta);
+            } else {
+              el.lastComputedAttractor = new CANNON.Vec3().copy(this.tempForce);
+              this.forceDelta.copy(this.tempForce);
+            }
+            // Apply force delta.
+            body.applyLocalImpulse(this.forceDelta, CANNON.Vec3.ZERO);
+          }
+        }
+      });
+    </script>
+
+    <!-- Template for player avatar. -->
+    <script id="avatar-template" type="text/html">
+      <a-entity class="avatar">
+<!--      
+        <a-cylinder class="stick"
+          position="0 0.8 0" height="1.6" radius="0.05"
+          color="blue">
+        </a-cylinder>
+-->
+        <a-entity class="label" position="0 2 0" rotation="0 180 0"
+          text="color:white;value:Player X;width:1;height:0.2;wrapCount:10;align:center;side:double"></a-entity>
+        
+        <a-entity class="hmd">
+          <a-sphere position="-0.05 0.1 -0.1" scale="0.02 0.02 0.02" color="black"></a-sphere>
+          <a-sphere position="0.05 0.1 -0.1" scale="0.02 0.02 0.02" color="black"></a-sphere>
+          <a-cone rotation="-90 0 0" open-ended="true"
+            position="0 0 -0.15" scale="0.1 0.3 0.2" color="white">
+          </a-cone>
+          <a-entity class="model" static-body position="0 -1.6 0" rotation="0 180 0" scale="1.25 1.25 0.75" 
+            gltf-model="https://cdn.rawgit.com/KhronosGroup/glTF-Sample-Models/master/2.0/RiggedFigure/glTF-Binary/RiggedFigure.glb"          
+        </a-entity>
+      </a-entity>
+    </script>
+    <script>
+      // Define custom schema for syncing avatar
+      var avatarSchema = {
+        template: '#avatar-template',
+        components: [
+          'position',
+          'rotation',
+
+          {selector: '.hmd', component: 'position'},
+          //{selector: '.left-hand', component: 'position' },
+          //{selector: '.right-hand', component: 'position' },
+
+          {selector: '.hmd', component: 'rotation'},
+          //{selector: '.left-hand', component: 'rotation'},
+          //{selector: '.right-hand', component: 'rotation'},
+          
+          {selector: '.label', component: 'text', property: 'value'},
+        ]
+      };
+      NAF.schemas.add(avatarSchema);
+    </script>
+    
+    <script>
+      AFRAME.registerComponent("player", {
+        schema: {default: "?"},
+        
+        init: function () {
+          var self = this;
+          this.el.addEventListener('templaterendered', function () {
+            // don't do this, or rotation will impact hmd and hands!
+            // self.el.setAttribute('look-controls', '');
+
+            self.el.querySelector('.label').setAttribute('text', {value: self.data});
+            
+            // use HMD camera and look-controls for in-VR
+            self.el.querySelector('.hmd').setAttribute('look-controls', '');
+            self.el.querySelector('.hmd').setAttribute('camera', {active:true, userHeight: 1.6});
+          });
+
+          // FIXME: player should really move in the direction the HMD is facing
+          self.el.setAttribute('wasd-controls', '');
+
+          self.el.setAttribute('networked-share', {
+            showLocalTemplate: true,
+            template: avatarSchema.template,
+            components: avatarSchema.components,
+          });
+        }
+      });
+    </script>    
+
+    <script>
+      AFRAME.registerComponent("set-room-from-url", {
+        init: function () {
+          var roomName = 'fourup';
+          if (window.location.search.length) {
+            window.location.search.substring(1).split('&').forEach(function(pair) {
+              var kv = pair.split('=');
+              if (decodeURIComponent(kv[0]) === 'name') {
+                roomName = decodeURIComponent(kv[1]);
+              }
+            })
+          }
+          console.log('roomName "' + roomName + '"');
+          this.el.setAttribute('networked-scene',
+            'app: silverBeast; ' +
+            'firebase: true; firebaseAuthType: none; ' +
+            'firebaseApiKey: AIzaSyBGuBM-G7PqFySL4TfsRlJA5F82BYUBVIQ; ' +
+            'firebaseAuthDomain: ball-room.firebaseapp.com; ' +
+            'firebaseDatabaseURL: https://ball-room.firebaseio.com; ' +
+            'debug:false; physics:true; updateRate:30; webrtc:true; webrtcAudio:false; room:' + roomName); 
+          //this.el.insertAdjacentHTML('beforeend', document.querySelector('#room-' + roomName).innerHTML);
+        }
+      });
+    </script>
+    
+    <!-- Scene declaration, with physics system parameters. -->
+    <a-scene physics="gravity:0; friction:0; restitution:1" 
+             set-room-from-url>
+
+      <!-- Mixin used to reduce redundancy in wall definitions. -->
+      <a-mixin id="wall" 
+        class="wall" static-body
+        material="shader:grid;interval:1;color:cyan"></a-mixin>
+
+      <!-- Prefetch a texture, but short timeout to avoid blocking. -->
+      <a-assets timeout="1">
+        <img id="contrast-noise" crossorigin="anonymous"
+             src="https://cdn.glitch.com/2d8374de-4ed1-4bfd-a6f4-95e0d4d6a47a%2Fcontrast-noise.png?1506062505936"></img>
+      </a-assets>
+   
+      <!-- Outer void, and skybox. -->
+      <a-box id="void" scale="10000 10000 -10000" material="shader:flat;color:black"></a-box>
+      <a-box id="skybox" scale="1000 1000 -1000" material="shader:flat;color:black"
+             material="shader:electricSphere; color:#000103; transparent:true"></a-box>
+      
+      <!-- Visible walls. --> 
+      <!-- top    --><a-box mixin="wall" position="0 3.1 -4" width="10" height="0.2" depth="10"></a-box>
+      <!-- front  --><a-box mixin="wall" position="0 1.5 -9.1" width="10" height="0.2" depth="3" rotation="-90 0 0"></a-box>
+      <!-- back   --><a-box mixin="wall" position="0 1.5 1.1" width="10" height="0.2" depth="3" rotation="-90 0 0"></a-box>
+      <!-- left   --><a-box mixin="wall" position="-5.1 1.5 -4" width="10" height="0.2" depth="3" rotation="-90 90 0"></a-box>
+      <!-- right  --><a-box mixin="wall" position="5.1 1.5 -4" width="10" height="0.2" depth="3" rotation="-90 -90 0"></a-box>
+      <!-- bottom --><a-box mixin="wall" static-body position="0 -0.1 -4" width="10" height="0.2" depth="10"></a-box>
+
+      <!-- Invisible walls, thick to avoid passing through easily. --> 
+      <!-- top    --><a-box static-body position="0 3.9 -4" width="13.6" height="1.8" depth="13.6" opacity="0"></a-box>
+      <!-- front  --><a-box static-body position="0 1.5 -9.9" width="13.6" height="1.8" depth="3" rotation="-90 0 0" opacity="0"></a-box>
+      <!-- back   --><a-box static-body position="0 1.5 1.9" width="10" height="1.8" depth="3" rotation="-90 0 0" opacity="0"></a-box>
+      <!-- left   --><a-box static-body position="-5.9 1.5 -4" width="13.6" height="1.8" depth="3" rotation="-90 90 0" opacity="0"></a-box>
+      <!-- right  --><a-box static-body position="5.9 1.5 -4" width="13.6" height="1.8" depth="3" rotation="-90 -90 0" opacity="0"></a-box>
+      <!-- bottom --><a-box static-body position="0 -0.9 -4" width="13.6" height="1.8" depth="13.6" opacity="0"></a-box>
+
+      <!-- Sun.  FIXME: body masses do not affect each other; zero gravity! -->
+      <a-sphere class="sun" attractor="mass:1e9" position="0 2 -4" radius="0.2" material="shader:grid;interval:0.02;color:yellow"></a-sphere> 
+    </a-scene>
+
+    <script>
+      // Define some convenience variables for scene elements we use below.
+      var scene = document.querySelector('a-scene');
+      var skybox = scene.querySelector('#skybox');
+
+      // Define some things we want to do once the scene is loaded. 
+      function onceSceneLoaded() {
+        // Apply the shader to scene entities.
+        skybox.setAttribute('material', {shader:'electricSphere', color:'#000103', transparent:true});
+      }
+
+      if (scene.hasLoaded) { onceSceneLoaded(); } else {
+        scene.addEventListener('loaded', onceSceneLoaded);
+      }      
+      
+      var picked = false;
+      
+      function players() {
+        if (picked) return;
+        
+        var players = [NAF.clientId].concat(Object.keys(NAF.connection.connectList)).sort();
+        console.log(NAF.clientId + ' players ' + JSON.stringify(players));
+        if (players.length < 4) { return; }
+        
+        if (NAF.clientId === players[0]) {
+          playerOne();
+        } else 
+        if (NAF.clientId === players[1]) {
+          playerTwo();
+        } else 
+        if (NAF.clientId === players[2]) {
+          playerThree();
+        } else 
+        if (NAF.clientId === players[3]) {
+          playerFour();
+        } else {
+          window.location.href = "kicked.html";
+        }
+        picked = true;
+      }
+
+      // Determine whether player one or two after a new data channel opens.
+      document.body.addEventListener('dataChannelOpened', players);
+        
+      // Determine whether player one or two after a new data channel opens.
+      document.body.addEventListener('dataChannelClosed', players);        
+      
+      function playerOne() {
+        console.log("playerOne()");
+        
+        // Player one, so take the near end.
+        // Ball to bounce around.
+        scene.insertAdjacentHTML('beforeend', 
+          '<a-entity player="Player 1" position="0 0 0" rotation="0 0 0"></a-entity> '
+          + '<a-sphere networked-adhoc class="ball" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + 'material="shader:electricSphere; color:#135; transparent:true" '
+          + 'position="0.5 2 0" radius="0.2">' 
+          + '</a-sphere>');
+        setTimeout(function() { scene.querySelector(".ball").body.velocity.set(0, 0, -10); });
+      }
+      
+      function playerTwo() {
+        console.log("playerTwo()");
+        
+        // Player two, so take the far end.
+        // Disc to bounce around.
+        scene.insertAdjacentHTML('beforeend', 
+          '<a-entity player="Player 2" position="0 0 -8" rotation="0 180 0"></a-entity> '
+          + '<a-cylinder networked-adhoc class="disc" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + 'material="shader:electricSphere; color:#135; transparent:true" '
+          + 'position="-0.5 2 -8" radius="0.2" height="0.05">' 
+          + '</a-cylinder>');
+        setTimeout(function() { scene.querySelector(".disc").body.velocity.set(0, 0, 10); });
+      }
+      
+      function playerThree() {
+        console.log("playerThree()");
+        
+        // Player three, so take the middle.
+        // Disc to bounce around.
+        scene.insertAdjacentHTML('beforeend', 
+          '<a-entity player="Player 3" position="-4 0 -4" rotation="0 -90 0"></a-entity> '
+          + '<a-cylinder networked-adhoc class="disc2" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + 'material="shader:electricSphere; color:#531; transparent:true" '
+          + 'position="-3 2 -4" radius="0.2" height="0.05">' 
+          + '</a-cylinder>');
+        setTimeout(function() { scene.querySelector(".disc2").body.velocity.set(10, 0, 0); });
+      }      
+      
+      function playerFour() {
+        console.log("playerFour()");
+        scene.camera.el.setAttribute('position', {x:4, y:1.6, z:-4});
+        scene.camera.el.setAttribute('rotation', '0 90 0');
+      }        
+    </script>
+  </body>
+</html>

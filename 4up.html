@@ -1,0 +1,19 @@
+<html>
+  <body>    
+    <iframe width="50%" height="50%" style="position:absolute;left:0;top:0">
+    </iframe>
+    <iframe width="50%" height="50%" style="position:absolute;left:50%;top:0">
+    </iframe>
+    <iframe width="50%" height="50%" style="position:absolute;left:0;top:50%">
+    </iframe>
+    <iframe width="50%" height="50%" style="position:absolute;left:50%;top:50%">
+    </iframe>
+
+    <script>
+      var room = "room" + Math.random().toString().substring(2);
+      Array.prototype.slice.call(document.querySelectorAll('iframe')).forEach(function(frame) {
+        frame.src = "single.html?name=" + room;
+      });
+    </script>
+  </body>
+</html>
