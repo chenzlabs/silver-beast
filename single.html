@@ -94,7 +94,7 @@
           <a-cone rotation="-90 0 0" open-ended="true"
             position="0 0 -0.15" scale="0.1 0.3 0.2" color="white">
           </a-cone>
-          <a-entity class="model" static-body position="0 -1.6 0" rotation="0 180 0" scale="1.25 1.25 0.75" 
+          <a-entity class="model" static-body="shape:cylinder" position="0 -1.6 0" rotation="0 180 0" scale="1.25 1.25 0.75" 
             gltf-model="https://cdn.rawgit.com/KhronosGroup/glTF-Sample-Models/master/2.0/RiggedFigure/glTF-Binary/RiggedFigure.glb"          
         </a-entity>
       </a-entity>
@@ -131,11 +131,46 @@
             // don't do this, or rotation will impact hmd and hands!
             // self.el.setAttribute('look-controls', '');
 
-            self.el.querySelector('.label').setAttribute('text', {value: self.data});
+            var label = self.el.querySelector('.label');
+            label.setAttribute('text', {value: self.data});
             
             // use HMD camera and look-controls for in-VR
-            self.el.querySelector('.hmd').setAttribute('look-controls', '');
-            self.el.querySelector('.hmd').setAttribute('camera', {active:true, userHeight: 1.6});
+            var hmd = self.el.querySelector('.hmd');
+            hmd.setAttribute('look-controls', '');
+            hmd.setAttribute('camera', {active:true, userHeight: 1.6});
+            
+            hmd.setAttribute('cursor', {fuse: false, 
+              rayOrigin: AFRAME.utils.device.isMobile() ? 'entity' : 'mouse'});
+            
+            hmd.addEventListener('click', function (event) {
+              // fire something in the direction of the raycaster intersection
+              var scene = self.el.sceneEl;
+              var pos = hmd.object3D.getWorldPosition();
+              var raycaster = hmd.components.raycaster;
+              if (raycaster.intersectedEls && raycaster.intersectedEls.length > 0) {
+                var dir = new THREE.Vector3().copy(raycaster.raycaster.ray.direction).multiplyScalar(5);
+                var el = document.createElement('a-cylinder');
+                el.setAttribute('networked-adhoc', '');
+                el.setAttribute('dynamic-body', 'mass:1;linearDamping:0;angularDamping:0');
+                el.setAttribute('material', 'shader:electricSphere; color:#153; transparent:true');
+                el.setAttribute('position', pos.x + ' ' + pos.y + ' ' + pos.z);
+                el.setAttribute('radius', '0.2');
+                el.setAttribute('height', '0.05');
+                scene.appendChild(el);
+                setTimeout(function() { el.body.applyImpulse(dir, CANNON.Vec3.ZERO); });
+              }              
+            });
+            
+            var model = self.el.querySelector('.model');
+            model.addEventListener('collide', function (e) {
+              model.setAttribute('material', {color: 'red'});
+  //            console.log('Player has collided with body #' + e.detail.body.id);
+
+  //            e.detail.target.el;  // Original entity (playerEl).
+  //            e.detail.body.el;    // Other entity, which playerEl touched.
+  //            e.detail.contact;    // Stats about the collision (CANNON.ContactEquation).
+  //            e.detail.contact.ni; // Normal (direction) of the collision (CANNON.Vec3).
+            });         
           });
 
           // FIXME: player should really move in the direction the HMD is facing
