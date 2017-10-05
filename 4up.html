@@ -10,9 +10,8 @@
     </iframe>
 
     <script>
-      var room = "room" + Math.random().toString().substring(2);
       Array.prototype.slice.call(document.querySelectorAll('iframe')).forEach(function(frame) {
-        frame.src = "single.html?name=" + room;
+        frame.src = "single.html" + window.location.search;
       });
     </script>
   </body>
