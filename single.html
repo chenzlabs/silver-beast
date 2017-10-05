@@ -18,7 +18,7 @@
     <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v1.4.3/dist/aframe-physics-system.js"></script>
     
     <!-- Import networked-aframe. -->
-    <script src="https://rawgit.com/chenzlabs/networked-aframe/positional-audio-2/dist/networked-aframe.js"></script>
+    <script src="https://rawgit.com/chenzlabs/networked-aframe/1636bdf/dist/networked-aframe.js"></script>
 
     <!-- Firebase -->
     <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase.js"></script>
@@ -47,6 +47,9 @@
           for (var i=0; i<dbs.length; i++) {
             var el = dbs[i];
             var body = el.body;
+            // We can catch a new dynamic-body or static-body before physics actually attaches the body.
+            if (!body) { continue; }
+            
             // Compute difference between body and attractor position.
             if (this.el.body) {
               this.tempPosition.copy(this.el.body.position);
@@ -78,13 +81,13 @@
 
     <!-- Template for player avatar. -->
     <script id="avatar-template" type="text/html">
-      <a-entity class="avatar">
-<!--      
-        <a-cylinder class="stick"
-          position="0 0.8 0" height="1.6" radius="0.05"
+      <a-entity class="avatar" collide-red>
+      
+        <a-cylinder class="stick" static-body
+          position="0 0.7 0" height="1.4" radius="0.05"
           color="blue">
         </a-cylinder>
--->
+
         <a-entity class="label" position="0 2 0" rotation="0 180 0"
           text="color:white;value:Player X;width:1;height:0.2;wrapCount:10;align:center;side:double"></a-entity>
         
@@ -94,7 +97,7 @@
           <a-cone rotation="-90 0 0" open-ended="true"
             position="0 0 -0.15" scale="0.1 0.3 0.2" color="white">
           </a-cone>
-          <a-entity class="model" static-body="shape:cylinder" position="0 -1.6 0" rotation="0 180 0" scale="1.25 1.25 0.75" 
+          <a-entity class="model" static-body-not-working-on-gltf-model position="0 -1.6 0" rotation="0 180 0" scale="1.25 1.25 0.75" 
             gltf-model="https://cdn.rawgit.com/KhronosGroup/glTF-Sample-Models/master/2.0/RiggedFigure/glTF-Binary/RiggedFigure.glb"          
         </a-entity>
       </a-entity>
@@ -116,9 +119,94 @@
           //{selector: '.right-hand', component: 'rotation'},
           
           {selector: '.label', component: 'text', property: 'value'},
+          {selector: '.stick', component: 'material', property: 'color'},
+          {selector: '.model', component: 'material', property: 'color'},
         ]
       };
       NAF.schemas.add(avatarSchema);
+    </script>
+    
+    <script>
+      // Physics collisions only happen within local engine.
+      // So each player needs to check for collisions with all avatars,
+      // and if it's not theirs, they need to tell the actual owner.
+      AFRAME.registerComponent("collide-red", {
+        init: function () {
+          var self = this;
+          
+          // FIXME: do at system level!
+          if (!this.el.sceneEl['collide-red']) {
+            this.el.sceneEl['collide-red'] = true;
+            // Subscribe to data channel for our custom event.
+            NAF.connection.subscribeToDataChannel('collide-red', function(fromClient, dataType, data) {
+              // Generate a (local) collide event on the body in the entity.
+              // FIXME: what if there are multiple?
+              var targetEl = NAF.entities.entities[data.target].querySelector('[dynamic-body],[static-body]');
+              var bodyEl = NAF.entities.entities[data.body];
+              targetEl.emit('collide',{target:{el:targetEl}, body:{el:bodyEl}, contact:{
+                bi: bodyEl.body,
+                bj: targetEl.body,
+                ni: data.contact.ni,
+                restitution: data.contact.restitution,
+                ri: data.contact.ri,
+                rj: data.contact.rj                
+              }})
+            })
+          }
+
+          this.el.addEventListener('templaterendered', function() {
+            //console.log(self.el.outerHTML);
+            var model = self.el.querySelector('.model');
+            var stick = self.el.querySelector('.stick');
+            stick.addEventListener('collide', function (e) {
+  //            console.log('Player has collided with body #' + e.detail.body.id);
+
+  //            e.detail.target.el;  // Original entity (playerEl).
+  //            e.detail.body.el;    // Other entity, which playerEl touched.
+  //            e.detail.contact;    // Stats about the collision (CANNON.ContactEquation).
+  //            e.detail.contact.ni; // Normal (direction) of the collision (CANNON.Vec3).
+              
+              var owner = self.el.components['networked-share'].data.owner;
+              if (NAF.clientId === owner) {
+                console.log(self.el.querySelector('.label').getAttribute('text').value 
+                            + ' ' + owner + ' collision with ' 
+                            + e.detail.body.el.components['networked-share'].data.owner + ' '
+                            + e.detail.body.el.components['networked-share'].data.networkId);
+                
+                // Real (local) collision, so do something about it.
+                self.collide(e.detail.target.el); //self.el.components['networked-share'].data.networkId);
+              } else {
+                console.log('CROSS-OWNER ' + self.el.querySelector('.label').getAttribute('text').value 
+                          + ' ' + owner + ' ' + self.el.components['networked-share'].data.networkId + ' collision with ' 
+                          + e.detail.body.el.components['networked-share'].data.owner + ' '
+                          + e.detail.body.el.components['networked-share'].data.networkId);
+                // Propagate message about collision to the owner to take action on theirs!
+                NAF.connection.sendDataGuaranteed(owner, 'collide-red', {
+                  target: self.el.components['networked-share'].data.networkId,
+                  body: e.detail.body.el.components['networked-share'].data.networkId,
+                  contact: {
+                    // CIRCULAR! bi: e.detail.contact.bi,
+                    // CIRCULAR! bj: e.detail.contact.bj,
+                    ni: e.detail.contact.ni,
+                    restitution: e.detail.contact.restitution,
+                    ri: e.detail.contact.ri,
+                    rj: e.detail.contact.rj
+                  }});
+              }
+            });         
+          });
+        },
+        
+        // FIXME: do at system level?
+        collide: function(targetbodyel) { //targetNetworkId) {
+          var el = targetbodyel.parentElement; //NAF.entities.entities[targetNetworkId];
+          //var model = el.querySelector('.model');
+          var stick = el.querySelector('.stick');          
+          var skybox = document.querySelector('#skybox');          
+          stick.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="blue"></a-animation>';
+          skybox.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="#000103"></a-animation>';
+        }
+      });
     </script>
     
     <script>
@@ -159,18 +247,7 @@
                 scene.appendChild(el);
                 setTimeout(function() { el.body.applyImpulse(dir, CANNON.Vec3.ZERO); });
               }              
-            });
-            
-            var model = self.el.querySelector('.model');
-            model.addEventListener('collide', function (e) {
-              model.setAttribute('material', {color: 'red'});
-  //            console.log('Player has collided with body #' + e.detail.body.id);
-
-  //            e.detail.target.el;  // Original entity (playerEl).
-  //            e.detail.body.el;    // Other entity, which playerEl touched.
-  //            e.detail.contact;    // Stats about the collision (CANNON.ContactEquation).
-  //            e.detail.contact.ni; // Normal (direction) of the collision (CANNON.Vec3).
-            });         
+            });            
           });
 
           // FIXME: player should really move in the direction the HMD is facing
@@ -199,13 +276,13 @@
           }
           console.log('roomName "' + roomName + '"');
           this.el.setAttribute('networked-scene',
-            'app: silverBeast; ' +
+            'app: silverbeast; ' +
             'firebase: true; firebaseAuthType: none; ' +
             'firebaseApiKey: AIzaSyBGuBM-G7PqFySL4TfsRlJA5F82BYUBVIQ; ' +
             'firebaseAuthDomain: ball-room.firebaseapp.com; ' +
             'firebaseDatabaseURL: https://ball-room.firebaseio.com; ' +
+            //'useLerp: false; compressSyncPackets: true; useShare: true;' +
             'debug:false; physics:true; updateRate:30; webrtc:true; webrtcAudio:false; room:' + roomName); 
-          //this.el.insertAdjacentHTML('beforeend', document.querySelector('#room-' + roomName).innerHTML);
         }
       });
     </script>
@@ -274,19 +351,22 @@
         console.log(NAF.clientId + ' players ' + JSON.stringify(players));
         if (players.length < 4) { return; }
         
-        if (NAF.clientId === players[0]) {
-          playerOne();
-        } else 
-        if (NAF.clientId === players[1]) {
-          playerTwo();
-        } else 
-        if (NAF.clientId === players[2]) {
-          playerThree();
-        } else 
-        if (NAF.clientId === players[3]) {
-          playerFour();
+        if (players.length === 4) {
+          if (NAF.clientId === players[0]) {
+            playerOne();
+          } else 
+          if (NAF.clientId === players[1]) {
+            playerTwo();
+          } else 
+          if (NAF.clientId === players[2]) {
+            playerThree();
+          } else 
+          if (NAF.clientId === players[3]) {
+            playerFour();
+          } 
         } else {
-          window.location.href = "kicked.html";
+          //window.location.href = "kicked.html";
+          spectator();
         }
         picked = true;
       }
@@ -304,11 +384,15 @@
         // Ball to bounce around.
         scene.insertAdjacentHTML('beforeend', 
           '<a-entity player="Player 1" position="0 0 0" rotation="0 0 0"></a-entity> '
-          + '<a-sphere networked-adhoc class="ball" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + '<a-sphere networked-adhoc="components:position,rotation,quaternion,velocity" class="ball" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
           + 'material="shader:electricSphere; color:#135; transparent:true" '
           + 'position="0.5 2 0" radius="0.2">' 
           + '</a-sphere>');
-        setTimeout(function() { scene.querySelector(".ball").body.velocity.set(0, 0, -10); });
+        setTimeout(function() { 
+          scene.querySelector(".ball").body.velocity.set(0, 0, -10); 
+          scene.querySelector('[player]').querySelector('[camera]').insertAdjacentHTML('beforeend', 
+            '<a-text position="0 -0.2 -0.25" align="center" width="0.5" value="Player 1"></a-text>');
+        });
       }
       
       function playerTwo() {
@@ -318,11 +402,15 @@
         // Disc to bounce around.
         scene.insertAdjacentHTML('beforeend', 
           '<a-entity player="Player 2" position="0 0 -8" rotation="0 180 0"></a-entity> '
-          + '<a-cylinder networked-adhoc class="disc" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + '<a-cylinder networked-adhoc="components:position,rotation,quaternion,velocity" class="disc" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
           + 'material="shader:electricSphere; color:#135; transparent:true" '
           + 'position="-0.5 2 -8" radius="0.2" height="0.05">' 
           + '</a-cylinder>');
-        setTimeout(function() { scene.querySelector(".disc").body.velocity.set(0, 0, 10); });
+        setTimeout(function() { 
+          scene.querySelector(".disc").body.velocity.set(0, 0, 10); 
+          scene.querySelector('[player]').querySelector('[camera]').insertAdjacentHTML('beforeend', 
+            '<a-text position="0 -0.2 -0.25" align="center" width="0.5" value="Player 2"></a-text>');
+        });
       }
       
       function playerThree() {
@@ -332,15 +420,38 @@
         // Disc to bounce around.
         scene.insertAdjacentHTML('beforeend', 
           '<a-entity player="Player 3" position="-4 0 -4" rotation="0 -90 0"></a-entity> '
-          + '<a-cylinder networked-adhoc class="disc2" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + '<a-cylinder networked-adhoc="components:position,rotation,quaternion,velocity" class="disc2" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
           + 'material="shader:electricSphere; color:#531; transparent:true" '
           + 'position="-3 2 -4" radius="0.2" height="0.05">' 
           + '</a-cylinder>');
-        setTimeout(function() { scene.querySelector(".disc2").body.velocity.set(10, 0, 0); });
+        setTimeout(function() { 
+          scene.querySelector(".disc2").body.velocity.set(10, 0, 0); 
+          scene.querySelector('[player]').querySelector('[camera]').insertAdjacentHTML('beforeend', 
+            '<a-text position="0 -0.2 -0.25" align="center" width="0.5" value="Player 3"></a-text>');
+        });
       }      
       
       function playerFour() {
         console.log("playerFour()");
+        //scene.camera.el.setAttribute('position', {x:4, y:1.6, z:-4});
+        
+        // Player four.
+        // Disc to bounce around.
+        scene.insertAdjacentHTML('beforeend', 
+          '<a-entity player="Player 4" position="4 0 -4" rotation="0 90 0"></a-entity> '
+          + '<a-cylinder networked-adhoc="components:[position,rotation,quaternion,velocity]" class="disc3" dynamic-body="mass:1;linearDamping:0;angularDamping:0" ' 
+          + 'material="shader:electricSphere; color:#351; transparent:true" '
+          + 'position="3 2 -4" radius="0.2" height="0.05">' 
+          + '</a-cylinder>');
+        setTimeout(function() { 
+          scene.querySelector(".disc3").body.velocity.set(-10, 0, 0); 
+          scene.querySelector('[player]').querySelector('[camera]').insertAdjacentHTML('beforeend', 
+            '<a-text position="0 -0.2 -0.25" align="center" width="0.5" value="Player 4"></a-text>');
+        });
+      }        
+      
+      function spectator() {
+        console.log("spectator()");
         scene.camera.el.setAttribute('position', {x:4, y:1.6, z:-4});
         scene.camera.el.setAttribute('rotation', '0 90 0');
       }        
