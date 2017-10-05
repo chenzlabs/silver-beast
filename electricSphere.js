@@ -119,7 +119,7 @@ AFRAME.utils.importShaderFrog(
   "electricSphere", // shader name
   importedShaderJSON,     // shader JSON string
   {
-    speed: 1,
+    speed: 0.1,
     resolution: 1, //8, // 2.33580302,
     image: '#contrast-noise',
     brightness: 25 // 5
