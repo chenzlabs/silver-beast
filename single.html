@@ -200,11 +200,11 @@
         // FIXME: do at system level?
         collide: function(targetbodyel) { //targetNetworkId) {
           var el = targetbodyel.parentElement; //NAF.entities.entities[targetNetworkId];
-          //console.log(el.outerHTML);
-          var model = el.querySelector('.model');
+          //var model = el.querySelector('.model');
           var stick = el.querySelector('.stick');          
-          stick.setAttribute('material', {color: 'red'});
-          model.setAttribute('material', {color: 'red'});          
+          var skybox = document.querySelector('#skybox');          
+          stick.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="blue"></a-animation>';
+          skybox.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="#000103"></a-animation>';
         }
       });
     </script>
