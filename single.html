@@ -1,5 +1,6 @@
 <html>
   <head>
+    <!-- Import A-Frame. -->
     <script src="https://rawgit.com/aframevr/aframe/master/dist/aframe-master.min.js"></script>
     
     <!-- Import grid shader. -->
@@ -11,77 +12,55 @@
     <!-- Include electricSphere ShaderFrog shader. -->
     <script src="electricSphere.js"></script>
 
-    <!-- Prevent touch causing flicker on iOS. -->
-    <style> * { -webkit-tap-highlight-color: rgba(0,0,0,0); } </style>    
-    
     <!-- Import physics.  FIXME: bug in 2.0.0, so use prior version. -->
-    <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v1.4.3/dist/aframe-physics-system.js"></script>
+    <script src="//cdn.rawgit.com/donmccurdy/aframe-physics-system/v1.4.3/dist/aframe-physics-system.min.js"></script>
     
-    <!-- Import networked-aframe. -->
-    <script src="https://rawgit.com/chenzlabs/networked-aframe/1636bdf/dist/networked-aframe.js"></script>
+    <!-- Import networked-aframe (my fork, as there are issues here if using the latest). -->
+    <script src="https://rawgit.com/chenzlabs/networked-aframe/24ce5a4/dist/networked-aframe.min.js"></script>
 
+    <!-- Include networked-collision component. -->
+    <script src="networked-collision.js"></script>
+    
+    <!-- Include attractor component. -->
+    <script src="attractor.js"></script>
+    
     <!-- Firebase -->
     <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase.js"></script>
     <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-database.js"></script>
     <script src="https://www.gstatic.com/firebasejs/4.3.1/firebase-messaging.js"></script>    
+    
+    <!-- Prevent touch causing flicker on iOS. -->
+    <style> * { -webkit-tap-highlight-color: rgba(0,0,0,0); } </style>        
   </head>
   <body>
-    <!-- Attractor component, to hopefully apply gravity to dynamic bodies. -->
+
+    <!-- Component for player avatars - if we get hit, turn red. -->
     <script>
-      AFRAME.registerComponent('attractor', {
-        schema: {
-          g: {default: 6.67e-11},
-          mass: {default: 1e9}
-        },
-
+      AFRAME.registerComponent("collision-red", {
+        dependencies: ["networked-collision"],
         init: function () {
-          this.tempPosition = new CANNON.Vec3();
-          this.tempForce = new CANNON.Vec3();
-          this.forceDelta = new CANNON.Vec3();
+          var self = this;
+          self.el.addEventListener('collision', function (e) {              
+            // Local collision (which may have been forwarded across network).
+            self.collide(e.detail.target.el);
+          });         
         },
-
-        tick: function (t, dt) {
-          var dbs = this.el.sceneEl.querySelectorAll('[dynamic-body]');
-          for (var i=0; i<dbs.length; i++) {
-            var el = dbs[i];
-            var body = el.body;
-            // We can catch a new dynamic-body or static-body before physics actually attaches the body.
-            if (!body) { continue; }
-            
-            // Compute difference between body and attractor position.
-            if (this.el.body) {
-              this.tempPosition.copy(this.el.body.position);
-            } else {
-              var position = this.el.getAttribute('position');
-              this.tempPosition.set(position.x, position.y, position.z);
-            }
-            this.tempPosition.vsub(body.position, this.tempForce);
-            // Compute distance between them (magnitude of difference).
-            var r = this.tempForce.length();
-            // Compute attraction strength.
-            var f = this.data.g * this.data.mass * body.mass / (r * r);
-            // make tempForce have the correct magnitude f.
-            this.tempForce.scale(f / r, this.tempForce);
-            // Compute force delta. NOTE: we need to know last applied value!
-            // FIXME: this will only work for one attractor...
-            if (el.lastComputedAttractor) {
-              this.tempForce.vsub(el.lastComputedAttractor, this.forceDelta);
-            } else {
-              el.lastComputedAttractor = new CANNON.Vec3().copy(this.tempForce);
-              this.forceDelta.copy(this.tempForce);
-            }
-            // Apply force delta.
-            body.applyLocalImpulse(this.forceDelta, CANNON.Vec3.ZERO);
-          }
+        
+        collide: function(targetbodyel) {
+          var el = targetbodyel.parentElement;
+          var stick = el.querySelector('.stick');          
+          var skybox = document.querySelector('#skybox');          
+          stick.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="blue"></a-animation>';
+          skybox.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="#000103"></a-animation>';
         }
       });
     </script>
-
+    
     <!-- Template for player avatar. -->
     <script id="avatar-template" type="text/html">
-      <a-entity class="avatar" collide-red>
+      <a-entity class="avatar" collision-red>
       
         <a-cylinder class="stick" static-body
           position="0 0.7 0" height="1.4" radius="0.05"
@@ -102,8 +81,9 @@
         </a-entity>
       </a-entity>
     </script>
+    
     <script>
-      // Define custom schema for syncing avatar
+      // Define custom schema for syncing avatar.
       var avatarSchema = {
         template: '#avatar-template',
         components: [
@@ -127,102 +107,23 @@
     </script>
     
     <script>
-      // Physics collisions only happen within local engine.
-      // So each player needs to check for collisions with all avatars,
-      // and if it's not theirs, they need to tell the actual owner.
-      AFRAME.registerComponent("collide-red", {
-        init: function () {
-          var self = this;
-          
-          // FIXME: do at system level!
-          if (!this.el.sceneEl['collide-red']) {
-            this.el.sceneEl['collide-red'] = true;
-            // Subscribe to data channel for our custom event.
-            NAF.connection.subscribeToDataChannel('collide-red', function(fromClient, dataType, data) {
-              // Generate a (local) collide event on the body in the entity.
-              // FIXME: what if there are multiple?
-              var targetEl = NAF.entities.entities[data.target].querySelector('[dynamic-body],[static-body]');
-              var bodyEl = NAF.entities.entities[data.body];
-              targetEl.emit('collide',{target:{el:targetEl}, body:{el:bodyEl}, contact:{
-                bi: bodyEl.body,
-                bj: targetEl.body,
-                ni: data.contact.ni,
-                restitution: data.contact.restitution,
-                ri: data.contact.ri,
-                rj: data.contact.rj                
-              }})
-            })
-          }
-
-          this.el.addEventListener('templaterendered', function() {
-            //console.log(self.el.outerHTML);
-            var model = self.el.querySelector('.model');
-            var stick = self.el.querySelector('.stick');
-            stick.addEventListener('collide', function (e) {
-  //            console.log('Player has collided with body #' + e.detail.body.id);
-
-  //            e.detail.target.el;  // Original entity (playerEl).
-  //            e.detail.body.el;    // Other entity, which playerEl touched.
-  //            e.detail.contact;    // Stats about the collision (CANNON.ContactEquation).
-  //            e.detail.contact.ni; // Normal (direction) of the collision (CANNON.Vec3).
-              
-              var owner = self.el.components['networked-share'].data.owner;
-              if (NAF.clientId === owner) {
-                console.log(self.el.querySelector('.label').getAttribute('text').value 
-                            + ' ' + owner + ' collision with ' 
-                            + e.detail.body.el.components['networked-share'].data.owner + ' '
-                            + e.detail.body.el.components['networked-share'].data.networkId);
-                
-                // Real (local) collision, so do something about it.
-                self.collide(e.detail.target.el); //self.el.components['networked-share'].data.networkId);
-              } else {
-                console.log('CROSS-OWNER ' + self.el.querySelector('.label').getAttribute('text').value 
-                          + ' ' + owner + ' ' + self.el.components['networked-share'].data.networkId + ' collision with ' 
-                          + e.detail.body.el.components['networked-share'].data.owner + ' '
-                          + e.detail.body.el.components['networked-share'].data.networkId);
-                // Propagate message about collision to the owner to take action on theirs!
-                NAF.connection.sendDataGuaranteed(owner, 'collide-red', {
-                  target: self.el.components['networked-share'].data.networkId,
-                  body: e.detail.body.el.components['networked-share'].data.networkId,
-                  contact: {
-                    // CIRCULAR! bi: e.detail.contact.bi,
-                    // CIRCULAR! bj: e.detail.contact.bj,
-                    ni: e.detail.contact.ni,
-                    restitution: e.detail.contact.restitution,
-                    ri: e.detail.contact.ri,
-                    rj: e.detail.contact.rj
-                  }});
-              }
-            });         
-          });
-        },
-        
-        // FIXME: do at system level?
-        collide: function(targetbodyel) { //targetNetworkId) {
-          var el = targetbodyel.parentElement; //NAF.entities.entities[targetNetworkId];
-          //var model = el.querySelector('.model');
-          var stick = el.querySelector('.stick');          
-          var skybox = document.querySelector('#skybox');          
-          stick.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="blue"></a-animation>';
-          skybox.innerHTML = '<a-animation dur="500" attribute="material.color" from="red" to="#000103"></a-animation>';
-        }
-      });
-    </script>
-    
-    <script>
       AFRAME.registerComponent("player", {
         schema: {default: "?"},
         
         init: function () {
           var self = this;
+          
+          // We want to use the network template for the avatar,
+          // but we want to change things for the local player,
+          // so react once the template has been rendered.
           this.el.addEventListener('templaterendered', function () {
-            // don't do this, or rotation will impact hmd and hands!
+            // Don't do this, or rotation will impact hmd and hands!
             // self.el.setAttribute('look-controls', '');
 
             var label = self.el.querySelector('.label');
             label.setAttribute('text', {value: self.data});
             
-            // use HMD camera and look-controls for in-VR
+            // Use HMD camera and look-controls for in-VR.
             var hmd = self.el.querySelector('.hmd');
             hmd.setAttribute('look-controls', '');
             hmd.setAttribute('camera', {active:true, userHeight: 1.6});
@@ -231,33 +132,39 @@
               rayOrigin: AFRAME.utils.device.isMobile() ? 'entity' : 'mouse'});
             
             hmd.addEventListener('click', function (event) {
-              // fire something in the direction of the raycaster intersection
-              var scene = self.el.sceneEl;
-              var pos = hmd.object3D.getWorldPosition();
-              var raycaster = hmd.components.raycaster;
-              if (raycaster.intersectedEls && raycaster.intersectedEls.length > 0) {
-                var dir = new THREE.Vector3().copy(raycaster.raycaster.ray.direction).multiplyScalar(5);
-                var el = document.createElement('a-cylinder');
-                el.setAttribute('networked-adhoc', '');
-                el.setAttribute('dynamic-body', 'mass:1;linearDamping:0;angularDamping:0');
-                el.setAttribute('material', 'shader:electricSphere; color:#153; transparent:true');
-                el.setAttribute('position', pos.x + ' ' + pos.y + ' ' + pos.z);
-                el.setAttribute('radius', '0.2');
-                el.setAttribute('height', '0.05');
-                scene.appendChild(el);
-                setTimeout(function() { el.body.applyImpulse(dir, CANNON.Vec3.ZERO); });
-              }              
+              self.fireDisc();
             });            
           });
 
           // FIXME: player should really move in the direction the HMD is facing
           self.el.setAttribute('wasd-controls', '');
 
+          // Declare player element as networked; local template will be rendered.
           self.el.setAttribute('networked-share', {
             showLocalTemplate: true,
             template: avatarSchema.template,
             components: avatarSchema.components,
           });
+        },
+        
+        fireDisc: function() {
+          // Fire something in the direction of the raycaster intersection.
+          var scene = this.el.sceneEl;
+          var hmd = this.el.querySelector('.hmd');
+          var pos = hmd.object3D.getWorldPosition();
+          var raycaster = hmd.components.raycaster;
+          if (raycaster.intersectedEls && raycaster.intersectedEls.length > 0) {
+            var dir = new THREE.Vector3().copy(raycaster.raycaster.ray.direction).multiplyScalar(5);
+            var el = document.createElement('a-cylinder');
+            el.setAttribute('networked-adhoc', '');
+            el.setAttribute('dynamic-body', 'mass:1;linearDamping:0;angularDamping:0');
+            el.setAttribute('material', 'shader:electricSphere; color:#153; transparent:true');
+            el.setAttribute('position', pos.x + ' ' + pos.y + ' ' + pos.z);
+            el.setAttribute('radius', '0.2');
+            el.setAttribute('height', '0.05');
+            scene.appendChild(el);
+            setTimeout(function() { el.body.applyImpulse(dir, CANNON.Vec3.ZERO); });
+          }                        
         }
       });
     </script>    
@@ -277,11 +184,12 @@
           console.log('roomName "' + roomName + '"');
           this.el.setAttribute('networked-scene',
             'app: silverbeast; ' +
+            // FIXME: Remove Firebase credentials!                               
             'firebase: true; firebaseAuthType: none; ' +
-            'firebaseApiKey: AIzaSyBGuBM-G7PqFySL4TfsRlJA5F82BYUBVIQ; ' +
-            'firebaseAuthDomain: ball-room.firebaseapp.com; ' +
-            'firebaseDatabaseURL: https://ball-room.firebaseio.com; ' +
-            //'useLerp: false; compressSyncPackets: true; useShare: true;' +
+            'firebaseApiKey: AIzaSyAMcCdrDQrv8G1sqpKChdmOex4nbvj32K0; ' +
+            'firebaseAuthDomain: silver-beast.firebaseapp.com; ' +
+            'firebaseDatabaseURL: https://silver-beast.firebaseio.com; ' +
+            'collisionOwnership:false; ' +
             'debug:false; physics:true; updateRate:30; webrtc:true; webrtcAudio:false; room:' + roomName); 
         }
       });
